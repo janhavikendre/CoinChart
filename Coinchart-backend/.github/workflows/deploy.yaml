@@ -1,0 +1,81 @@
+name: Deploy to AWS
+
+on:
+    workflow_dispatch:
+    push:
+        branches:
+          - main
+
+env:
+    AWS_REGION: eu-central-1
+    AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+    AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+    PRIVATE_SSH_KEY: ${{ secrets.PRIVATE_SSH_KEY }}
+    PUBLIC_IP: ${{ secrets.PUBLIC_IP }}
+    DOCKER_REPOSITORY: coinchart
+    IMAGE_TAG: coinchart-backend-${{ github.ref_name }}
+    MONGODB_URI: ${{ secrets.MONGODB_URI }}
+    JWT_SECRET: ${{ secrets.JWT_SECRET }}
+
+
+jobs:
+  build-and-push-to-ecr:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v2
+
+      - name: 🔐 Login to AWS ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: 🏗️ Build and Push Backend Docker Image
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          aws ecr batch-delete-image --repository-name $DOCKER_REPOSITORY --image-ids imageTag=$IMAGE_TAG --region $AWS_REGION || true
+          docker build -f Docker/Dockerfile -t $REGISTRY/$DOCKER_REPOSITORY:$IMAGE_TAG .
+          docker push $REGISTRY/$DOCKER_REPOSITORY:$IMAGE_TAG
+
+  deploy-to-ec2:
+    needs: build-and-push-to-ecr
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 🔐 Login to AWS ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: 🚀 Deploy to EC2 via SSH
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ env.PUBLIC_IP }}
+          username: ec2-user
+          key: ${{ env.PRIVATE_SSH_KEY }}
+          envs: REGISTRY, DOCKER_REPOSITORY, IMAGE_TAG, AWS_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, MONGODB_URI, JWT_SECRET
+          script: |
+            echo "🔄 Updating EC2 instance..."
+            export MONDODB_URI=${MONGODB_URI}
+            export JWT_SECRET=${JWT_SECRET}
+
+            echo $(aws ecr get-login-password --region $AWS_REGION) | sudo docker login --username AWS --password-stdin $REGISTRY
+
+            # Stop and remove old containers
+            sudo docker stop coinchart-backend || true
+            sudo docker rm coinchart-backend || true
+
+            sudo docker pull $REGISTRY/$DOCKER_REPOSITORY:$IMAGE_TAG
+
+            sudo docker run -d \
+              --name coinchart-backend \
+              --restart on-failure \
+              --volume /home/ec2-user/data:/data \
+              -p 5000:5000 \
+              -e MONGODB_URI="${MONGODB_URI}" \
+              -e JWT_SECRET="${JWT_SECRET}" \
+              $REGISTRY/$DOCKER_REPOSITORY:$IMAGE_TAG
+
+            echo "🚀 Deployment complete!"

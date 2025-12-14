@@ -1,0 +1,16 @@
+services:
+  backend:
+    container_name: coinchart-backend  # Custom container name
+    image: coinchart-backend
+    build:
+      context: .
+      dockerfile: Docker/Dockerfile
+      labels:
+        - coinchart_backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/data
+    ports:
+      - "5001:5000"  #
