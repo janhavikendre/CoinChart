@@ -1,0 +1,215 @@
+.custom-div {
+    width: 100%;
+    height: 100%;
+    margin-left: 0;
+    padding: 1rem;
+    padding-left: 0;
+    background: linear-gradient(
+        to bottom,
+        rgba(255, 0, 0, 0.5),
+        rgba(50, 50, 50, 0.5) 50%,
+        rgba(0, 255, 0, 0.5)
+    );
+    border-radius: 10px;
+    color: white;
+    position: relative;
+    overflow: visible;
+    transform: translateZ(0);
+    backface-visibility: hidden;
+}
+
+@media (min-width: 640px) {
+    .custom-div {
+        width: calc(100% - 3rem);
+        margin-left: 2rem;
+        padding: 1.5rem;
+    }
+}
+
+.bubbles-wrapper {
+    position: absolute;
+    inset: -40px 0 0 0; /* Extend top boundary */
+    height: calc(100% + 40px); /* Increase height to account for overflow */
+    pointer-events: none;
+    overflow: visible;
+    z-index: 15;
+    padding: 0;
+    opacity: 1 !important;
+    visibility: visible !important;
+    transform-style: preserve-3d;
+    backface-visibility: hidden;
+}
+
+.bubble-container {
+    position: absolute;
+    z-index: 20;
+    pointer-events: auto;
+    will-change: transform;
+    transform-origin: center center;
+    transition: transform 0.2s ease-out !important;
+    opacity: 1 !important;
+    visibility: visible !important;
+    margin: 0 !important;
+    padding: 0 !important;
+}
+
+/* Add smooth transitions for bubble movement */
+.bubble {
+    position: relative;
+    transform: translate(-50%, -50%);
+    transition: transform 0.4s ease-out !important; /* increased duration for smoother effect */
+}
+
+.bubble, .bubble * {
+    cursor: pointer;
+    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+}
+
+/* Optionally, if you want to target only the text inside the bubble: */
+.bubble span {
+    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+}
+
+/* Keep a mild scale on hover */
+.bubble:hover {
+    transform: translate(-50%, -50%) scale(1.05) !important;
+    z-index: 100;
+}
+
+.bubble > div:first-child {
+    backdrop-filter: blur(5px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+    background: rgba(0, 0, 0, 0.2);
+    transition: all 0.3s ease-in-out;
+}
+
+/* Added stronger bubble gradient fallback */
+.bubble > div:first-child.strong-gradient {
+    background: radial-gradient(circle at center, rgba(0,0,0,0.9) 10%, rgba(0,0,0,0.2) 80%, transparent 100%);
+}
+
+.risk-label {
+    position: absolute;
+    left: -60px;
+    transform: translateY(-50%);
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 0.75rem;
+    font-weight: 500;
+    display: none;
+}
+
+@media (min-width: 768px) {
+    .risk-label {
+        display: block;
+    }
+}
+
+.grid-line {
+    position: absolute;
+    left: 30px;
+    right: 0;
+    height: 1px;
+    background: rgba(255, 255, 255, 0.1);
+    z-index: 1;
+}
+
+.bubble-content {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    cursor: pointer;
+    padding: 0.5rem;
+    transition: opacity 0.3s ease-in-out;
+    gap: 1px !important; 
+    padding: 2px !important; 
+}
+
+.bubble-content img {
+    width: 33%;
+    height: 33%;
+    object-fit: contain;
+    margin-bottom: 0.25rem;
+    filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.1));
+}
+
+.bubble-content .symbol {
+    font-size: 0.65rem;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.9);
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+    transition: none; 
+}
+
+@media (min-width: 640px) {
+    .bubble-content .symbol {
+        font-size: 0.75rem;
+    }
+}
+
+.bubble-content .risk {
+    font-weight: 700;
+    color: rgba(255, 255, 255, 0.95);
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+@media (min-width: 640px) {
+    .bubble-content .risk {
+        font-size: 0.75rem;
+    }
+}
+
+.bubble:hover > div:first-child {
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+
+.bubble-container.loading {
+    transform: scale(0.9);
+}
+
+/* Animated entrance */
+.bubble-container {
+    animation: bubbleEnter 0.3s ease-out forwards;
+}
+
+@keyframes bubbleEnter {
+    from {
+        opacity: 0;
+        transform: scale(0.9) translate(-50%, -50%);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1) translate(-50%, -50%);
+    }
+}
+
+/* Enhanced mobile touch interactions */
+@media (max-width: 640px) {
+    .bubble {
+        touch-action: manipulation;
+    }
+    
+    .bubble:active {
+        transform: translate(-50%, -50%) scale(1) !important;
+    }
+}
+
+/* Additional info appears on hover */
+.bubble-content .additional-info {
+    opacity: 0;
+    transition: opacity 0.3s ease-in-out;
+}
+
+.bubble:hover .additional-info {
+    opacity: 1;
+}
+
+/* Ensure symbol stays in place during hover */
+.bubble:hover .bubble-content {
+    transform: none;
+}

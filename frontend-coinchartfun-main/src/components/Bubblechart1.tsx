@@ -1,0 +1,478 @@
+import React, { useEffect, useMemo, useState, useRef } from "react";
+import { Loader2 } from "lucide-react";
+import * as d3 from 'd3';
+import { useData } from '../context/DataContext';
+import { useFavorites } from '../context/FavoritesContext';
+import Modal from './Modal';
+import { Wget } from './Chart';
+import TokenWidget from './TokenWidget';
+
+interface DataItem extends d3.SimulationNodeDatum {
+  risk?: number;
+  bubbleSize?: number;
+  volume?: number;
+  symbol?: string;
+  icon?: string;
+  x: number;
+  y: number;
+  radius: number;
+  price?: string; // changed from number to string
+  moralisLink?: string;
+  warnings?: string[];
+  "1mChange"?: number;
+  "2wChange"?: number;
+  "3mChange"?: number;
+}
+
+interface MobileBubbleChartProps {
+  selectedRange: string;
+  searchQuery: string;
+}
+
+// Constants for risk band positioning
+const PADDING_TOP = 20;
+const PADDING_BOTTOM = 20;
+
+// Add this helper function near the top (after imports)
+const createBubbleHTML = (d: DataItem) => {
+  const iconSize = `${d.radius * 0.6}px`;
+  return `
+    <div class="bubble-content">
+      ${ d.icon && d.icon.trim() !== ""
+        ? `<img src="${d.icon}" alt="${d.symbol}" style="width: ${iconSize}; height: ${iconSize}; object-fit: contain;" loading="lazy" onerror="this.onerror=null;this.src='/default.png';" />`
+        : `<img src="/default.png" alt="${d.symbol}" style="width: ${iconSize}; height: ${iconSize}; object-fit: contain;" loading="lazy" />`
+      }
+    </div>
+  `;
+};
+
+const MobileBubbleChart: React.FC<MobileBubbleChartProps> = ({ selectedRange, searchQuery }) => {
+  const { filteredData, loading, error } = useData();
+  const { favorites, showOnlyFavorites } = useFavorites();
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const simulationRef = useRef<d3.Simulation<DataItem, undefined> | null>(null);
+  const [containerDimensions, setContainerDimensions] = useState({ width: 0, height: 0 });
+  const [isLandscape, setIsLandscape] = useState(window.innerWidth > window.innerHeight);
+  const [showModal, setShowModal] = useState(false);
+  const [selectedToken, setSelectedToken] = useState<DataItem | null>(null);
+  const [selectedBubble, setSelectedBubble] = useState<DataItem | null>(null);
+  
+  // Fixed bubble sizes based on orientation
+  const [bubbleSizes, setBubbleSizes] = useState({
+    min: 10,
+    max: 20,
+    scale: 1
+  });
+
+  // Calculate container dimensions and detect orientation
+  useEffect(() => {
+    const updateDimensions = () => {
+      const vh = window.innerHeight;
+      const vw = window.innerWidth;
+      const landscape = vw > vh;
+      // Use the full viewport height in landscape, otherwise subtract topbar height (10vh)
+      const availableHeight = landscape ? vh : vh - (vh * 0.10);
+      setIsLandscape(landscape);
+      if (landscape) {
+        setBubbleSizes({
+          min: 20,
+          max: 35,      // increased max size
+          scale: 1.2
+        });
+      } else {
+        setBubbleSizes({
+          min: Math.max(vw * 0.05, 10),
+          max: Math.max(vw * 0.08, 20),
+          scale: window.innerWidth < 768 ? 0.7 : 1
+        });
+      }
+      setContainerDimensions({
+        width: vw,
+        height: availableHeight  // For landscape, chart occupies full viewport
+      });
+    };
+
+    updateDimensions();
+    window.addEventListener('resize', updateDimensions);
+    return () => window.removeEventListener('resize', updateDimensions);
+  }, []);
+
+  // Function to determine risk band position for portrait mode
+  const getRiskBand = (risk: number, height: number) => {
+    const EFFECTIVE_HEIGHT = height - PADDING_TOP - PADDING_BOTTOM;
+    const clampedRisk = Math.max(10, Math.min(100, risk));
+    
+    if (clampedRisk >= 90) {
+      return PADDING_TOP + EFFECTIVE_HEIGHT * 0.21;
+    } else if (clampedRisk >= 80) {
+      return PADDING_TOP + EFFECTIVE_HEIGHT * 0.34;
+    } else if (clampedRisk >= 70) {
+      return PADDING_TOP + EFFECTIVE_HEIGHT * 0.44;
+    } else if (clampedRisk >= 60) {
+      return PADDING_TOP + EFFECTIVE_HEIGHT * 0.56;
+    }
+    return PADDING_TOP + EFFECTIVE_HEIGHT * 0.6;
+  };
+
+  // Filter data based on selected range, favorites, and search query
+  const rangeFilteredData = useMemo<DataItem[]>(() => {
+    if (!filteredData.length) return [];
+    
+    let start = 0;
+    let end = 100;
+
+    if (selectedRange !== "Top 100") {
+      const [startStr, endStr] = selectedRange.split(" - ");
+      start = parseInt(startStr) - 1;
+      end = parseInt(endStr);
+    }
+
+    // Get the filtered data based on range
+    let dataToProcess = filteredData.slice(Math.max(0, start), Math.min(filteredData.length, end));
+    
+    // Apply favorites filter if needed
+    if (showOnlyFavorites) {
+      dataToProcess = dataToProcess.filter(item => 
+        item.symbol && favorites.includes(item.symbol)
+      );
+    }
+
+    // Apply search term filter
+    if (searchQuery) {
+      dataToProcess = dataToProcess.filter(item => item.symbol?.toLowerCase().startsWith(searchQuery.toLowerCase()));
+    }
+
+    // Define adjustedBubbleScale within useMemo using isLandscape
+    const adjustedBubbleScale = isLandscape ? 1.2 : 1;
+
+    return dataToProcess.map(item => {
+      const safeBubbleSize = (item.bubbleSize !== null && !isNaN(Number(item.bubbleSize)))
+        ? Number(item.bubbleSize)
+        : Math.random() * 0.5 + 0.5;
+      return {
+        ...item,
+        risk: (item.risk !== null && !isNaN(Number(item.risk))) ? Number(item.risk) : 50,
+        bubbleSize: safeBubbleSize,
+        price: item.price?.toString() || '0',
+        x: 0,
+        y: 0,
+        radius: Math.max(bubbleSizes.min, Math.min(bubbleSizes.max, safeBubbleSize * 35 * adjustedBubbleScale))
+      };
+    });
+  }, [filteredData, selectedRange, showOnlyFavorites, favorites, searchQuery, isLandscape]);
+
+  // Calculate bubble color based on risk and favorite status
+  const calculateBubbleColor = (risk: number, isFavorite: boolean) => {
+    if (isFavorite) {
+      // Gold colors for favorites
+      return {
+        border: "rgba(255, 215, 0, 0.95)",
+        background: "rgba(255, 215, 0, 0.35)",
+        gradient: "rgba(255, 215, 0, 0.6)"
+      };
+    }
+    
+    const clampedRisk = Math.max(10, Math.min(100, risk || 50));
+    const t = (clampedRisk - 10) / 90;
+    
+    const borderColor = d3.interpolateRgb("rgba(30,255,30,0.9)", "rgba(255,0,0,0.95)")(t);
+    const backgroundColor = d3.interpolateRgb("rgba(30,255,30,0.35)", "rgba(255,0,0,0.4)")(t);
+    const gradientColor = d3.interpolateRgb("rgba(30,255,30,0.5)", "rgba(255,0,0,0.6)")(t);
+    
+    return {
+      border: borderColor,
+      background: backgroundColor,
+      gradient: gradientColor
+    };
+  };
+
+  const handleBubbleClick = (d: DataItem) => {
+    setSelectedBubble(d);
+  };
+
+  const handleCloseWidget = () => {
+    setSelectedBubble(null);
+  };
+
+  const handleCloseModal = () => {
+    setShowModal(false);
+    setSelectedToken(null);
+  };
+
+  const createBubbleHTML = (d: DataItem) => {
+    const isFavorite = d.symbol && favorites.includes(d.symbol);
+    const colors = calculateBubbleColor(d.risk || 50, isFavorite || false);
+    
+    // Adjust sizes for landscape mode
+    const iconSize = isLandscape 
+      ? Math.max(d.radius * 0.8, 18) 
+      : Math.max(d.radius * 0.6, 12);
+      
+    const symbolFontSize = isLandscape 
+      ? Math.max(d.radius * 0.5, 14) 
+      : Math.max(d.radius * 0.35, 10);
+      
+    // Updated percentage font size: reduced by ~20%
+    const riskFontSize = isLandscape 
+      ? Math.max(d.radius * 0.3, 10) 
+      : Math.max(d.radius * 0.25, 7);
+    
+    return `
+      <div class="bubble">
+        <div class="relative rounded-full transition-transform hover:scale-105"
+             style="width: ${d.radius * 2}px; height: ${d.radius * 2}px;">
+          <div class="absolute inset-0 rounded-full"
+               style="border: ${isLandscape ? '2px' : '3px'} solid ${colors.border}; background: ${colors.background};">
+            <div class="absolute inset-0 rounded-full"
+                 style="background: radial-gradient(circle at center, ${colors.gradient}, transparent);">
+            </div>
+          </div>
+          <div class="absolute inset-0 flex flex-col items-center justify-center cursor-pointer">
+            ${d.icon 
+              ? `<img src="${d.icon}" alt="${d.symbol}" 
+                     style="width: ${iconSize}px; height: ${iconSize}px; object-fit: contain; margin-bottom: ${isLandscape ? '0' : '2px'};" 
+                     loading="lazy" onerror="this.onerror=null;this.src='/default.png';" />`
+              : `<div style="width: ${iconSize}px; height: ${iconSize}px; 
+                           background: rgba(255,255,255,0.2); border-radius: 50%; margin-bottom: ${isLandscape ? '0' : '2px'};"></div>`
+            }
+            <span style="font-size: ${symbolFontSize}px; color: white; font-weight: 700; 
+                          text-shadow: 0 0 4px rgba(0,0,0,0.9), 0 0 2px rgba(0,0,0,1);
+                          letter-spacing: 0.05em;">${d.symbol}</span>
+            <span style="font-size: ${riskFontSize}px; color: white; font-weight: 600;
+                          text-shadow: 0 0 4px rgba(0,0,0,0.9), 0 0 2px rgba(0,0,0,1);">${d.risk?.toFixed(1)}%</span>
+          </div>
+        </div>
+      </div>
+    `;
+  };
+
+  // Add oscillationForce function after other helper functions:
+  function oscillationForce() {
+    let nodes: any[];
+    function force(alpha: number) {
+      const t = Date.now() / 1000;
+      nodes.forEach((d: any) => {
+        d.vx += Math.sin(t + d.x * 0.02) * 0.3 * alpha;
+        d.vy += Math.cos(t + d.y * 0.02) * 0.3 * alpha;
+      });
+    }
+    force.initialize = function(_nodes: any[]) {
+      nodes = _nodes;
+    };
+    return force;
+  }
+
+  // Initialize and update the visualization
+  useEffect(() => {
+    if (!containerRef.current || !rangeFilteredData.length || 
+        containerDimensions.width === 0 || containerDimensions.height === 0) {
+      return;
+    }
+
+    if (simulationRef.current) {
+      simulationRef.current.stop();
+    }
+
+    const { width, height } = containerDimensions;
+    const container = d3.select(containerRef.current);
+    container.selectAll("*").remove();
+
+    const bubbleContainer = container
+      .append("div")
+      .attr("class", "relative w-full h-full");
+
+    let initializedData;
+    
+    if (isLandscape) {
+      // In landscape mode, distribute bubbles freely across the entire area
+      // Sort data by risk to help with initial placement
+      const sortedData = [...rangeFilteredData].sort((a, b) => (b.risk || 0) - (a.risk || 0));
+      
+      initializedData = sortedData.map((d, i) => {
+        // Calculate bubble size - smaller in landscape
+        const bubbleRadius = Math.max(
+          bubbleSizes.min,
+          Math.min(bubbleSizes.max, (d.bubbleSize || 0.5) * 15 * bubbleSizes.scale)
+        );
+        
+        // Determine vertical position based on risk
+        // Higher risk (>90) at top (20% of height), lower risk (<50) at bottom (80% of height)
+        const risk = d.risk || 50;
+        const normalizedRisk = (risk - 10) / 90; // 0 to 1 scale
+        const invertedRisk = 1 - normalizedRisk; // Invert so higher risk is at top
+        
+        // Calculate y position with some randomness
+        // Use a nonlinear mapping to create more natural distribution
+        const yPct = Math.pow(invertedRisk, 0.8); // Power less than 1 spreads high-risk tokens more
+        const yPosition = PADDING_TOP + (height - PADDING_TOP - PADDING_BOTTOM) * yPct;
+        
+        // For x position, spread across width with controlled randomness
+        // Use golden ratio to prevent clumping
+        const PHI = 0.618033988749895;
+        let xNoise = (i * PHI) % 1.0; // Well-distributed noise between 0-1
+        
+        // Ensure we use at least 90% of the width
+        const xPadding = width * 0.05;
+        const xPosition = xPadding + (width - 2 * xPadding) * xNoise;
+        
+        return {
+          ...d,
+          x: xPosition,
+          y: yPosition,
+          radius: bubbleRadius
+        };
+      });
+
+      const simulation = d3.forceSimulation<DataItem>(initializedData)
+        .force("x", d3.forceX<DataItem>(d => d.x).strength(0.35))
+        .force("y", d3.forceY<DataItem>(d => d.y).strength(0.35))
+        .force("collide", d3.forceCollide<DataItem>().radius(d => d.radius + 6).strength(1))
+        .force("charge", d3.forceManyBody<DataItem>().strength(d => -Math.pow(d.radius, 1.5) * 0.3))
+        .force("oscillation", oscillationForce())
+        .alphaDecay(0.02)
+        .velocityDecay(0.4);
+        
+      simulationRef.current = simulation;
+    } else {
+      // Original vertical layout for portrait
+      initializedData = rangeFilteredData.map((d) => {
+        const bubbleRadius = Math.max(
+          bubbleSizes.min,
+          Math.min(bubbleSizes.max, (d.bubbleSize || 0.5) * 20 * bubbleSizes.scale)
+        );
+        
+        return {
+          ...d,
+          x: width / 2,
+          y: getRiskBand(d.risk || 50, height) + (Math.random() - 0.5) * 10,
+          radius: bubbleRadius
+        };
+      });
+
+      const simulation = d3.forceSimulation<DataItem>(initializedData)
+        .force("x", d3.forceX<DataItem>(width / 2).strength(0.3))
+        .force("y", d3.forceY<DataItem>(d => getRiskBand(d.risk || 50, height)).strength(0.4))
+        .force("collide", d3.forceCollide<DataItem>().radius(d => d.radius + 2).strength(1))
+        .force("charge", d3.forceManyBody<DataItem>().strength(d => -Math.pow(d.radius, 2) * 0.3))
+        .force("oscillation", oscillationForce())
+        .alphaDecay(0.02)
+        .velocityDecay(0.3);
+        
+      simulationRef.current = simulation;
+    }
+
+    // For landscape mode, after simulation ends, rearrange bubbles in a horizontal line:
+    if (isLandscape && simulationRef.current) {
+      simulationRef.current.on("end", () => {
+        const sortedData = initializedData.sort((a, b) => a.x - b.x);
+        const leftPadding = width * 0.05;
+        const availableWidth = width - 2 * leftPadding;
+        const spacing = availableWidth / (sortedData.length + 1);
+        // Arrange bubbles horizontally at the bottom with slight sine offset for a non-straight row
+        sortedData.forEach((d, i) => {
+          d.x = leftPadding + spacing * (i + 1);
+          const baseY = height - PADDING_BOTTOM - d.radius;
+          d.y = baseY + 5 * Math.sin(i);
+        });
+        bubbles.style("left", d => `${d.x}px`)
+          .style("top", d => `${d.y}px`);
+      });
+    }
+
+    // Let the simulation run longer in landscape mode to achieve nice distribution
+    if (window.innerWidth < 768) {
+      setTimeout(() => simulationRef.current?.stop(), 6000);
+    } else if (!isLandscape) {
+      // Normal stop time for desktop portrait
+      setTimeout(() => simulationRef.current?.stop(), 8000);
+    } else {
+      // Let it run longer in landscape for better distribution
+      setTimeout(() => simulationRef.current?.stop(), 10000);
+    }
+
+    const bubbles = bubbleContainer
+      .selectAll<HTMLDivElement, DataItem>(".bubble-container")
+      .data(initializedData)
+      .enter()
+      .append("div")
+      .attr("class", "absolute transform -translate-x-1/2 -translate-y-1/2 bubble-container")
+      .style("opacity", "0")
+      .html(createBubbleHTML)
+      .on("click", (event, d) => handleBubbleClick(d));
+
+    bubbles.transition()
+      .duration(600)
+      .delay((d, i) => i * 8)
+      .style("opacity", "1");
+
+    simulationRef.current?.on("tick", () => {
+      bubbles
+        .style("left", d => `${Math.max(d.radius, Math.min(width - d.radius, d.x))}px`)
+        .style("top", d => `${Math.max(d.radius, Math.min(height - d.radius, d.y))}px`)
+        .style("transform", "translate(-50%, -50%)")
+        .style("position", "absolute");
+    });
+
+    return () => {
+      simulationRef.current?.stop();
+    };
+  }, [rangeFilteredData, containerDimensions, selectedRange, favorites, bubbleSizes, isLandscape]);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-[82vh] bg-black">
+        <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+      </div>
+    );
+  }
+
+  if (!loading && (!filteredData.length || !rangeFilteredData.length)) {
+    return (
+      <div className="flex items-center justify-center h-[82vh] bg-black">
+        <p className="text-white text-center px-4">
+          {showOnlyFavorites && rangeFilteredData.length === 0 
+            ? "No favorites found. Add some by clicking the star icon in a token's details." 
+            : "No data available for the selected filters"}
+        </p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex items-center justify-center h-[82vh] bg-black">
+        <div className="bg-red-900/50 p-4 rounded-lg m-4">
+          <p className="text-red-200">Error loading data: {error}</p>
+          <button 
+            onClick={() => window.location.reload()}
+            className="mt-2 px-4 py-2 bg-red-700 rounded text-white hover:bg-red-600"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      {/* Updated container: remove extra top padding and bottom padding */}
+      <div className="w-full h-full relative">
+        <div className="absolute inset-0 bg-gradient-to-b from-red-900/20 via-yellow-700/10 to-green-900/20 z-0" />
+        <div 
+          ref={containerRef}
+          className="relative w-full h-full z-20"
+        />
+      </div>
+      {selectedBubble && (
+        <TokenWidget 
+          tokenData={selectedBubble} 
+          onClose={handleCloseWidget}
+          alwaysTradingView={true}
+        />
+      )}
+    </>
+  );
+};
+
+export default MobileBubbleChart;
